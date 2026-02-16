@@ -5,6 +5,7 @@ import random
 import shutil
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from core.config import SplicerConfig
@@ -67,20 +68,31 @@ def main() -> None:
         chunk_dir.mkdir()
 
         # --- Phase 1: Probe & Normalize ---
-        print("\n--- Probing and normalizing inputs ---")
+        print(f"\n--- Probing and normalizing inputs ({config.max_workers} workers) ---")
         normalized_videos: list[Path] = []
 
-        for i, vid in enumerate(videos):
-            print(f"  [{i+1}/{len(videos)}] {vid.name}")
+        def _normalize_one(idx: int, vid: Path) -> tuple[int, Path | None, str]:
+            """Probe and normalize a single video. Returns (index, output_path, status_msg)."""
             try:
                 info = probe(vid)
-                if info.is_vfr:
-                    print(f"    VFR detected — will force CFR at {config.target_fps}fps")
-                out = norm_dir / f"norm_{i:04d}.mp4"
+                vfr_note = f" (VFR->CFR {config.target_fps}fps)" if info.is_vfr else ""
+                out = norm_dir / f"norm_{idx:04d}.mp4"
                 normalize_video(vid, out, config, probe_result=info)
-                normalized_videos.append(out)
+                return idx, out, f"  [{idx+1}/{len(videos)}] {vid.name}{vfr_note}"
             except (ProbeError, RuntimeError) as e:
-                print(f"    SKIPPED: {e}")
+                return idx, None, f"  [{idx+1}/{len(videos)}] {vid.name} SKIPPED: {e}"
+
+        with ThreadPoolExecutor(max_workers=config.max_workers) as pool:
+            futures = {pool.submit(_normalize_one, i, v): i for i, v in enumerate(videos)}
+            results: list[tuple[int, Path | None, str]] = []
+            for future in as_completed(futures):
+                idx, out, msg = future.result()
+                print(msg)
+                results.append((idx, out, msg))
+
+        # Sort by original index for deterministic ordering
+        results.sort(key=lambda r: r[0])
+        normalized_videos = [out for _, out, _ in results if out is not None]
 
         for i, img in enumerate(images):
             print(f"  [img {i+1}/{len(images)}] {img.name}")
@@ -96,16 +108,39 @@ def main() -> None:
             sys.exit(1)
 
         # --- Phase 2: Chunk ---
-        print("\n--- Chunking normalized videos ---")
+        print(f"\n--- Chunking normalized videos ({config.max_workers} workers) ---")
+
+        # Pre-generate deterministic per-video sub-RNGs sequentially
+        sub_seeds = [rng.randint(0, 2**31 - 1) for _ in normalized_videos]
+
+        def _chunk_one(idx: int, norm_path: Path, seed: int) -> tuple[int, list]:
+            """Chunk a single normalized video with its own sub-RNG."""
+            sub_rng = random.Random(seed)
+            # Each video gets its own subdir to avoid filename collisions
+            vid_chunk_dir = chunk_dir / f"v{idx:04d}"
+            vid_chunk_dir.mkdir(exist_ok=True)
+            chunks = chunk_video(norm_path, vid_chunk_dir, config, sub_rng, start_index=0)
+            print(f"  [{idx+1}/{len(normalized_videos)}] {norm_path.name} -> {len(chunks)} chunks")
+            return idx, chunks
+
+        with ThreadPoolExecutor(max_workers=config.max_workers) as pool:
+            futures = {
+                pool.submit(_chunk_one, i, p, s): i
+                for i, (p, s) in enumerate(zip(normalized_videos, sub_seeds))
+            }
+            chunk_results: list[tuple[int, list]] = []
+            for future in as_completed(futures):
+                chunk_results.append(future.result())
+
+        # Reassemble in original order and re-index chunks
+        chunk_results.sort(key=lambda r: r[0])
         all_chunks = []
         chunk_idx = 0
-
-        for norm_path in normalized_videos:
-            print(f"  chunking {norm_path.name}")
-            chunks = chunk_video(norm_path, chunk_dir, config, rng, start_index=chunk_idx)
+        for _, chunks in chunk_results:
+            for c in chunks:
+                c.chunk_index = chunk_idx
+                chunk_idx += 1
             all_chunks.extend(chunks)
-            chunk_idx += len(chunks)
-            print(f"    -> {len(chunks)} chunks")
 
         print(f"Total chunks: {len(all_chunks)}")
 
@@ -180,6 +215,9 @@ def parse_args() -> argparse.Namespace:
     # Codec
     p.add_argument("--preset", default=None, help="x264 preset (default: fast)")
 
+    # Parallelism
+    p.add_argument("--workers", type=int, default=None, help="Thread pool size for parallel operations (default: 4)")
+
     # Prep mode
     p.add_argument("--prep", action="store_true", help="Preprocessing mode — grain/greyscale sources, then exit (no splicer pipeline)")
     p.add_argument("--grain", action="store_true", help="(prep) Split long videos into segments")
@@ -226,6 +264,8 @@ def build_config(args: argparse.Namespace) -> SplicerConfig:
         config.preset = args.preset
     if args.grain_duration is not None:
         config.grain_duration = args.grain_duration
+    if args.workers is not None:
+        config.max_workers = args.workers
 
     return config
 

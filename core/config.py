@@ -35,6 +35,9 @@ class SplicerConfig:
     # --- prep mode ---
     grain_duration: int = 60                # target segment length in seconds for grain
 
+    # --- parallelism ---
+    max_workers: int = 4                    # thread pool size for normalize/chunk/luma
+
     # --- reproducibility ---
     rng_seed: Optional[int] = None          # None = random, int = reproducible
 
