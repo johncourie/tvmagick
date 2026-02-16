@@ -139,6 +139,31 @@ python3 cli.py ./footage/ --seed 42
 python3 cli.py ./footage/ --preset medium
 ```
 
+### Prep Mode
+
+Preprocessing for raw source material. Runs standalone — produces files in the output directory, then exits. Feed the output into a normal splicer run.
+
+```bash
+# Grain: split long videos into ~60s segments (codec copy, fast)
+python3 cli.py --prep --grain ./raw_footage/ -o ./prepped/
+
+# Grain with custom segment length
+python3 cli.py --prep --grain --grain-duration 90 ./raw_footage/ -o ./prepped/
+
+# Greyscale: re-encode all videos to greyscale
+python3 cli.py --prep --greyscale ./videos/ -o ./greyscale/
+
+# Both: grain first, then greyscale the segments
+python3 cli.py --prep --grain --greyscale ./raw_footage/ -o ./prepped/
+
+# Then feed prepped output into the splicer pipeline
+python3 cli.py ./prepped/ --seed 42 --ntsc -o output_final
+```
+
+**Grain** uses ffmpeg's segment muxer with codec copy (no re-encode) for speed. Videos shorter than the grain duration are copied through unchanged. The main pipeline handles normalization later.
+
+**Greyscale** re-encodes with `hue=s=0` and strips audio. When combined with grain, intermediate grain segments are cleaned up automatically.
+
 ## Output
 
 Each run produces two files in the output directory:
@@ -217,7 +242,8 @@ splicer/
 │   ├── normalize.py     # resolution/fps/colorspace conforming
 │   ├── chunk.py         # frame-accurate extraction
 │   ├── assemble.py      # concat, anti-strobe, luma normalization
-│   └── manifest.py      # reproducible JSON build log
+│   ├── manifest.py      # reproducible JSON build log
+│   └── prep.py          # preprocessing — grain (segment) and greyscale
 └── *.bash               # legacy scripts (reference only)
 ```
 

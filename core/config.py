@@ -32,6 +32,9 @@ class SplicerConfig:
     antistrobe_luma_strength: float = 0.5   # 0.0 = off, 1.0 = full normalization
     antistrobe_delta_threshold: int = 80    # luma delta flag threshold (0-255)
 
+    # --- prep mode ---
+    grain_duration: int = 60                # target segment length in seconds for grain
+
     # --- reproducibility ---
     rng_seed: Optional[int] = None          # None = random, int = reproducible
 

@@ -13,6 +13,7 @@ from core.normalize import normalize_video, normalize_image
 from core.chunk import chunk_video
 from core.assemble import assemble
 from core.manifest import Manifest
+from core.prep import grain_video, greyscale_video, collect_videos
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp", ".gif"}
@@ -32,6 +33,11 @@ def main() -> None:
     if shutil.which("ffmpeg") is None:
         print("error: ffmpeg not found on PATH", file=sys.stderr)
         sys.exit(1)
+
+    # Prep mode — preprocess and exit
+    if args.prep:
+        run_prep(args, config)
+        return
 
     # Resolve RNG seed
     if config.rng_seed is None:
@@ -174,6 +180,12 @@ def parse_args() -> argparse.Namespace:
     # Codec
     p.add_argument("--preset", default=None, help="x264 preset (default: fast)")
 
+    # Prep mode
+    p.add_argument("--prep", action="store_true", help="Preprocessing mode — grain/greyscale sources, then exit (no splicer pipeline)")
+    p.add_argument("--grain", action="store_true", help="(prep) Split long videos into segments")
+    p.add_argument("--greyscale", action="store_true", help="(prep) Re-encode videos to greyscale")
+    p.add_argument("--grain-duration", type=int, default=None, help="(prep) Grain segment length in seconds (default: 60)")
+
     return p.parse_args()
 
 
@@ -212,8 +224,63 @@ def build_config(args: argparse.Namespace) -> SplicerConfig:
         config.antistrobe_delta_threshold = args.luma_threshold
     if args.preset is not None:
         config.preset = args.preset
+    if args.grain_duration is not None:
+        config.grain_duration = args.grain_duration
 
     return config
+
+
+def run_prep(args: argparse.Namespace, config: SplicerConfig) -> None:
+    """Run preprocessing pipeline: grain and/or greyscale, then exit."""
+    if not args.grain and not args.greyscale:
+        print("error: --prep requires at least one of --grain or --greyscale", file=sys.stderr)
+        sys.exit(1)
+
+    videos = collect_videos(args.inputs)
+    if not videos:
+        print("error: no video files found in inputs", file=sys.stderr)
+        sys.exit(1)
+
+    output_dir = Path(config.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Prep mode: {len(videos)} video(s)")
+
+    working_files = videos
+
+    if args.grain:
+        print(f"\n--- Grain: splitting into ~{config.grain_duration}s segments ---")
+        grain_dir = output_dir / "_grain_tmp" if args.greyscale else output_dir
+        grain_dir.mkdir(parents=True, exist_ok=True)
+
+        grained: list[Path] = []
+        for vid in working_files:
+            segments = grain_video(vid, grain_dir, config)
+            grained.extend(segments)
+
+        print(f"Grain complete: {len(grained)} segment(s)")
+        working_files = grained
+
+    if args.greyscale:
+        print("\n--- Greyscale ---")
+        grey_dir = output_dir
+        grey_dir.mkdir(parents=True, exist_ok=True)
+
+        greyed: list[Path] = []
+        for vid in working_files:
+            out = greyscale_video(vid, grey_dir, config)
+            greyed.append(out)
+
+        print(f"Greyscale complete: {len(greyed)} file(s)")
+
+        # Clean up intermediate grain files if both modes ran
+        if args.grain:
+            grain_dir = output_dir / "_grain_tmp"
+            if grain_dir.exists():
+                shutil.rmtree(grain_dir)
+
+    print("\nPrep done.")
+    print(f"Output: {output_dir}")
 
 
 def collect_inputs(paths: list[str]) -> list[Path]:
