@@ -1,0 +1,239 @@
+"""CLI entry point — argparse interface wiring the full splicer pipeline."""
+
+import argparse
+import random
+import shutil
+import sys
+import tempfile
+from pathlib import Path
+
+from core.config import SplicerConfig
+from core.probe import probe, ProbeError, ensure_ffprobe
+from core.normalize import normalize_video, normalize_image
+from core.chunk import chunk_video
+from core.assemble import assemble
+from core.manifest import Manifest
+
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp", ".gif"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".mpg", ".mpeg", ".ts"}
+
+
+def main() -> None:
+    args = parse_args()
+    config = build_config(args)
+
+    # Verify ffmpeg/ffprobe available
+    try:
+        ensure_ffprobe()
+    except ProbeError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+    if shutil.which("ffmpeg") is None:
+        print("error: ffmpeg not found on PATH", file=sys.stderr)
+        sys.exit(1)
+
+    # Resolve RNG seed
+    if config.rng_seed is None:
+        config.rng_seed = random.randint(0, 2**31 - 1)
+    rng = random.Random(config.rng_seed)
+    print(f"RNG seed: {config.rng_seed}")
+
+    # Collect input files
+    input_paths = collect_inputs(args.inputs)
+    if not input_paths:
+        print("error: no valid input files found", file=sys.stderr)
+        sys.exit(1)
+
+    videos = [p for p in input_paths if p.suffix.lower() in VIDEO_EXTENSIONS]
+    images = [p for p in input_paths if p.suffix.lower() in IMAGE_EXTENSIONS]
+    print(f"Inputs: {len(videos)} video(s), {len(images)} image(s)")
+
+    # Setup output
+    output_dir = Path(config.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(prefix="splicer_") as tmpdir:
+        work_dir = Path(tmpdir)
+        norm_dir = work_dir / "normalized"
+        chunk_dir = work_dir / "chunks"
+        norm_dir.mkdir()
+        chunk_dir.mkdir()
+
+        # --- Phase 1: Probe & Normalize ---
+        print("\n--- Probing and normalizing inputs ---")
+        normalized_videos: list[Path] = []
+
+        for i, vid in enumerate(videos):
+            print(f"  [{i+1}/{len(videos)}] {vid.name}")
+            try:
+                info = probe(vid)
+                if info.is_vfr:
+                    print(f"    VFR detected — will force CFR at {config.target_fps}fps")
+                out = norm_dir / f"norm_{i:04d}.mp4"
+                normalize_video(vid, out, config, probe_result=info)
+                normalized_videos.append(out)
+            except (ProbeError, RuntimeError) as e:
+                print(f"    SKIPPED: {e}")
+
+        for i, img in enumerate(images):
+            print(f"  [img {i+1}/{len(images)}] {img.name}")
+            # Images get normalized during assembly, just validate here
+            try:
+                probe(img)
+            except ProbeError as e:
+                print(f"    SKIPPED: {e}")
+                images = [p for p in images if p != img]
+
+        if not normalized_videos and not images:
+            print("error: no inputs survived normalization", file=sys.stderr)
+            sys.exit(1)
+
+        # --- Phase 2: Chunk ---
+        print("\n--- Chunking normalized videos ---")
+        all_chunks = []
+        chunk_idx = 0
+
+        for norm_path in normalized_videos:
+            print(f"  chunking {norm_path.name}")
+            chunks = chunk_video(norm_path, chunk_dir, config, rng, start_index=chunk_idx)
+            all_chunks.extend(chunks)
+            chunk_idx += len(chunks)
+            print(f"    -> {len(chunks)} chunks")
+
+        print(f"Total chunks: {len(all_chunks)}")
+
+        # --- Phase 3: Assemble ---
+        print("\n--- Assembling final output ---")
+        manifest = Manifest(
+            rng_seed=config.rng_seed,
+            config_snapshot=config.to_dict(),
+        )
+
+        # Record chunks in manifest
+        for c in all_chunks:
+            manifest.add_chunk(c)
+
+        output_path = output_dir / "splicer_output.mp4"
+        assemble(
+            chunks=all_chunks,
+            image_paths=[str(p) for p in images],
+            config=config,
+            rng=rng,
+            manifest=manifest,
+            work_dir=work_dir,
+            output_path=output_path,
+        )
+
+        # --- Phase 4: Write manifest ---
+        manifest_path = output_dir / "splicer_manifest.json"
+        manifest.save(manifest_path)
+        print(f"\nManifest: {manifest_path}")
+
+    print(f"Output:   {output_path}")
+    print(f"Frames:   {manifest.actual_frame_count} (expected {manifest.expected_frame_count})")
+    if manifest.luma_flags:
+        print(f"Luma warnings: {len(manifest.luma_flags)}")
+    print("Done.")
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        prog="splicer",
+        description="Semantic threshold video splicer — rapid-cut assembly for perceptual disruption",
+    )
+
+    p.add_argument(
+        "inputs", nargs="+",
+        help="Input video/image files or directories containing them",
+    )
+    p.add_argument("-o", "--output-dir", default="output", help="Output directory (default: output)")
+    p.add_argument("--seed", type=int, default=None, help="RNG seed for reproducibility")
+
+    # Resolution
+    res = p.add_mutually_exclusive_group()
+    res.add_argument("--hd", action="store_true", help="1920x1080 output (default)")
+    res.add_argument("--ntsc", action="store_true", help="720x480 NTSC CRT output")
+    res.add_argument("--pal", action="store_true", help="720x576 PAL CRT output")
+    res.add_argument("--resolution", type=str, default=None, help="Custom WxH (e.g. 1280x720)")
+
+    # Aspect
+    p.add_argument("--aspect", choices=["letterbox", "crop", "stretch"], default="letterbox")
+
+    # Timing
+    p.add_argument("--chunk-min", type=int, default=None, help="Min chunk frames (default: 3)")
+    p.add_argument("--chunk-max", type=int, default=None, help="Max chunk frames (default: 5)")
+    p.add_argument("--fps", type=int, default=None, help="Target framerate (default: 24)")
+
+    # Anti-strobe
+    p.add_argument("--no-antistrobe", action="store_true", help="Disable all anti-strobe processing")
+    p.add_argument("--buffer-frames", type=int, default=None, help="Gray buffer frames between cuts (default: 1)")
+    p.add_argument("--luma-strength", type=float, default=None, help="Luma normalization strength 0.0-1.0 (default: 0.5)")
+    p.add_argument("--luma-threshold", type=int, default=None, help="Luma delta warning threshold 0-255 (default: 80)")
+
+    # Codec
+    p.add_argument("--preset", default=None, help="x264 preset (default: fast)")
+
+    return p.parse_args()
+
+
+def build_config(args: argparse.Namespace) -> SplicerConfig:
+    """Build SplicerConfig from parsed CLI args."""
+    if args.ntsc:
+        config = SplicerConfig.ntsc_crt()
+    elif args.pal:
+        config = SplicerConfig.pal_crt()
+    else:
+        config = SplicerConfig()
+
+    if args.resolution:
+        parts = args.resolution.lower().split("x")
+        if len(parts) == 2:
+            config.target_resolution = (int(parts[0]), int(parts[1]))
+
+    config.output_dir = args.output_dir
+    config.aspect_mode = args.aspect
+
+    if args.seed is not None:
+        config.rng_seed = args.seed
+    if args.chunk_min is not None:
+        config.chunk_frames_min = args.chunk_min
+    if args.chunk_max is not None:
+        config.chunk_frames_max = args.chunk_max
+    if args.fps is not None:
+        config.target_fps = args.fps
+    if args.no_antistrobe:
+        config.antistrobe_enabled = False
+    if args.buffer_frames is not None:
+        config.antistrobe_buffer_frames = args.buffer_frames
+    if args.luma_strength is not None:
+        config.antistrobe_luma_strength = args.luma_strength
+    if args.luma_threshold is not None:
+        config.antistrobe_delta_threshold = args.luma_threshold
+    if args.preset is not None:
+        config.preset = args.preset
+
+    return config
+
+
+def collect_inputs(paths: list[str]) -> list[Path]:
+    """Expand directories and filter to supported file types."""
+    valid_ext = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
+    result: list[Path] = []
+
+    for p_str in paths:
+        p = Path(p_str)
+        if p.is_dir():
+            for child in sorted(p.iterdir()):
+                if child.is_file() and child.suffix.lower() in valid_ext:
+                    result.append(child)
+        elif p.is_file() and p.suffix.lower() in valid_ext:
+            result.append(p)
+        else:
+            print(f"  skipping: {p} (not a supported file or directory)")
+
+    return result
+
+
+if __name__ == "__main__":
+    main()
