@@ -20,15 +20,17 @@ splicer/
 ├── CLAUDE.md
 ├── legacy_v0.1.sh      # original bash script for reference
 ├── cli.py               # argparse entry point
-├── gui.py               # Gradio interface (future, same core functions)
+├── gui.py               # Gradio interface (same core functions)
 ├── core/
 │   ├── __init__.py
-│   ├── config.py        # all parameters as a dataclass, consumed by CLI and future GUI
+│   ├── config.py        # all parameters as a dataclass, consumed by CLI and GUI
 │   ├── probe.py         # ffprobe JSON wrapper, input validation, rejection logging
 │   ├── normalize.py     # resolution, pix_fmt, fps, colorspace, luma normalization
 │   ├── chunk.py         # frame-accurate trim, chunk extraction, metadata tagging
 │   ├── assemble.py      # concat, image interleaving, anti-strobe insertion
-│   └── manifest.py      # reproducible build log (JSON)
+│   ├── manifest.py      # reproducible build log (JSON)
+│   ├── bench.py         # synthetic-clip benchmark, saves .splicer_calibration.json
+│   └── estimator.py     # dry-run estimator, probes inputs and predicts time/size
 ├── test_assets/         # sample videos and images for pipeline validation
 └── output/              # final assembled output
 ```
@@ -39,7 +41,7 @@ splicer/
 - **ffmpeg/ffprobe**: Must be on PATH (Homebrew, apt/dnf, winget/choco, or manual install)
 - **No pip dependencies for core pipeline** — subprocess + json + random + dataclasses
 - Optional: numpy for luma analysis if ffmpeg filter approach is insufficient
-- Future: gradio for GUI
+- Optional: gradio for GUI
 - ffmpeg is called via `subprocess`, not as a library. This is intentional — keeps Python as orchestration, ffmpeg as the workhorse, avoids compiled binding issues.
 
 ## Origin
@@ -106,6 +108,13 @@ This is an **artistic control**, not just a safety measure. All parameters tunab
 - Store complete config snapshot used for the assembly
 - Checksum final output; verify frame count against expected total
 - Manifest format: JSON, human-readable, diffable
+
+### Benchmark & Estimation (bench.py, estimator.py)
+- **`--benchmark`**: Generates a ~10s synthetic clip (bright/dark/mandelbrot lavfi segments), runs the full pipeline against it, times each stage, and saves per-frame-rate calibration data to `.splicer_calibration.json`
+- **`--dry-run`**: Probes all inputs without processing, loads calibration data (or conservative defaults), estimates total time, output frame count, and file size with resolution scaling
+- Both are early-exit modes (like `--prep`) — run and exit before the main pipeline
+- `bench.py` and `estimator.py` do not import each other — coupled only through `.splicer_calibration.json` on disk
+- Calibration file is gitignored (machine-specific)
 
 ## Audio
 - Strip audio from all sources during chunking (`-an` on all ffmpeg calls)

@@ -12,5 +12,8 @@ footage/
 generated/
 _old/
 
+# Calibration
+.splicer_calibration.json
+
 # Claude
 .claude/

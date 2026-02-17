@@ -73,6 +73,7 @@ Opens a browser interface at `http://localhost:7860` with the full splicer pipel
 - Resolution presets (HD, NTSC CRT, PAL CRT, custom)
 - Frame duration sliders with perceptual threshold labels
 - Anti-strobe controls (buffer frames, luma normalization, delta threshold)
+- Benchmark button and dry-run toggle for time/size estimation
 - RNG seed for reproducibility
 - Real-time pipeline log
 - Output preview and download for video + manifest JSON
@@ -187,6 +188,24 @@ python3 cli.py ./footage/ --seed 42
 python3 cli.py ./footage/ --preset medium
 ```
 
+### Benchmark & Dry Run
+
+```bash
+# Benchmark your machine — generates a synthetic clip, times each pipeline stage,
+# saves calibration data to .splicer_calibration.json
+python3 cli.py --benchmark
+
+# Dry run — probe inputs and estimate time/size without processing
+python3 cli.py --dry-run ./footage/
+
+# Benchmark then immediately estimate with the fresh calibration
+python3 cli.py --benchmark --dry-run ./footage/
+```
+
+The benchmark creates a ~10s synthetic clip (bright, dark, and motion segments) and runs the full pipeline against it. Calibration data is saved locally and used by `--dry-run` to produce machine-specific estimates. Without a calibration file, dry run uses conservative defaults.
+
+Both features are also available in the GUI — a Benchmark button and a Dry Run checkbox.
+
 ### Prep Mode
 
 Preprocessing for raw source material. Runs standalone — produces files in the output directory, then exits. Feed the output into a normal splicer run.
@@ -293,7 +312,9 @@ splicer/
 │   ├── chunk.py         # frame-accurate extraction
 │   ├── assemble.py      # concat, anti-strobe, luma normalization
 │   ├── manifest.py      # reproducible JSON build log
-│   └── prep.py          # preprocessing — grain (segment) and greyscale
+│   ├── prep.py          # preprocessing — grain (segment) and greyscale
+│   ├── bench.py         # synthetic-clip benchmark, calibration data
+│   └── estimator.py     # dry-run estimator, time/size prediction
 └── *.bash               # legacy scripts (reference only)
 ```
 

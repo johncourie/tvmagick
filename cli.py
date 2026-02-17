@@ -33,10 +33,39 @@ def main() -> None:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # Benchmark mode — run benchmark and exit
+    if args.benchmark:
+        from core.bench import run_benchmark, CALIBRATION_FILENAME
+        cal = run_benchmark(config, verbose=True)
+        cal_path = Path(CALIBRATION_FILENAME)
+        cal.save(cal_path)
+        if not args.dry_run:
+            return
+        # If both --benchmark and --dry-run, fall through to dry-run
+
+    # Dry-run mode — estimate and exit
+    if args.dry_run:
+        from core.estimator import estimate as run_estimate
+        if not args.inputs:
+            print("error: --dry-run requires input files or directories", file=sys.stderr)
+            sys.exit(1)
+        input_paths = collect_inputs(args.inputs)
+        if not input_paths:
+            print("error: no valid input files found", file=sys.stderr)
+            sys.exit(1)
+        est = run_estimate(input_paths, config)
+        est.print_summary()
+        return
+
     # Prep mode — preprocess and exit
     if args.prep:
         run_prep(args, config)
         return
+
+    # Validate inputs for main pipeline (nargs="*" allows empty)
+    if not args.inputs:
+        print("error: inputs are required (provide files or directories)", file=sys.stderr)
+        sys.exit(1)
 
     # Resolve RNG seed
     if config.rng_seed is None:
@@ -183,7 +212,7 @@ def parse_args() -> argparse.Namespace:
     )
 
     p.add_argument(
-        "inputs", nargs="+",
+        "inputs", nargs="*",
         help="Input video/image files or directories containing them",
     )
     p.add_argument("-o", "--output-dir", default="output", help="Output directory (default: output)")
@@ -221,6 +250,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--grain", action="store_true", help="(prep) Split long videos into segments")
     p.add_argument("--greyscale", action="store_true", help="(prep) Re-encode videos to greyscale")
     p.add_argument("--grain-duration", type=int, default=None, help="(prep) Grain segment length in seconds (default: 60)")
+
+    # Benchmark & estimation
+    p.add_argument("--benchmark", action="store_true", help="Run benchmark on synthetic clip, save calibration data, then exit")
+    p.add_argument("--dry-run", action="store_true", dest="dry_run", help="Probe inputs and estimate pipeline time/size, then exit")
 
     return p.parse_args()
 
