@@ -276,10 +276,10 @@ def run_splicer(
     chunk_min, chunk_max, img_min, img_max, fps,
     antistrobe, buffer_frames, luma_strength, luma_threshold,
     seed, workers, preset,
+    dry_run=False,
 ):
     """Generator yielding (log, preview_video, output_file, manifest_file)."""
     log = _LogStream(echo=sys.__stdout__)
-    state = {"done": False, "error": False, "output": None, "manifest": None}
 
     config = _build_config(
         resolution, custom_res, aspect,
@@ -290,6 +290,13 @@ def run_splicer(
 
     vid_paths = _extract_paths(video_files)
     img_paths = _extract_paths(image_files)
+
+    # Dry-run mode — estimate only
+    if dry_run:
+        yield from _run_dry_run(vid_paths, img_paths, config, log)
+        return
+
+    state = {"done": False, "error": False, "output": None, "manifest": None}
 
     def _work():
         old = sys.stdout
@@ -319,6 +326,73 @@ def run_splicer(
         yield text, None, None, None
     else:
         yield text, state["output"], state["output"], state["manifest"]
+
+
+def _run_dry_run(vid_paths, img_paths, config, log):
+    """Run estimator and yield results to log panel."""
+    from core.estimator import estimate as run_estimate
+    from pathlib import Path as _Path
+
+    old = sys.stdout
+    sys.stdout = log
+    try:
+        all_paths = [_Path(p) for p in vid_paths + img_paths]
+        if not all_paths:
+            print("Dry run: no input files provided.")
+            sys.stdout = old
+            yield log.getvalue(), None, None, None
+            return
+        est = run_estimate(all_paths, config)
+        est.print_summary()
+    except Exception:
+        traceback.print_exc(file=log)
+    finally:
+        sys.stdout = old
+
+    yield log.getvalue(), None, None, None
+
+
+def run_benchmark_gen(
+    resolution, custom_res, aspect,
+    chunk_min, chunk_max, img_min, img_max, fps,
+    antistrobe, buffer_frames, luma_strength, luma_threshold,
+    seed, workers, preset,
+):
+    """Generator for benchmark button — yields (bench_log,)."""
+    from core.bench import run_benchmark, CALIBRATION_FILENAME
+    from pathlib import Path as _Path
+
+    log = _LogStream(echo=sys.__stdout__)
+    state = {"done": False}
+
+    config = _build_config(
+        resolution, custom_res, aspect,
+        chunk_min, chunk_max, img_min, img_max, fps,
+        antistrobe, buffer_frames, luma_strength, luma_threshold,
+        seed, workers, preset,
+    )
+
+    def _work():
+        old = sys.stdout
+        sys.stdout = log
+        try:
+            cal = run_benchmark(config, verbose=True)
+            cal.save(_Path(CALIBRATION_FILENAME))
+        except Exception:
+            traceback.print_exc(file=log)
+        finally:
+            sys.stdout = old
+            state["done"] = True
+
+    t = threading.Thread(target=_work, daemon=True)
+    t.start()
+
+    while not state["done"]:
+        time.sleep(0.4)
+        yield log.getvalue()
+
+    t.join()
+    yield log.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +495,20 @@ def build_ui():
                 label="x264 Preset",
             )
 
+        # --- Benchmark & Dry Run ---
+        with gr.Row():
+            benchmark_btn = gr.Button("Benchmark", variant="secondary")
+            dry_run = gr.Checkbox(label="Dry run (estimate only)", value=False)
+
         run_btn = gr.Button("Run Splicer", variant="primary", size="lg")
+
+        benchmark_log = gr.Textbox(
+            label="Benchmark Log",
+            lines=10,
+            max_lines=30,
+            interactive=False,
+            visible=False,
+        )
 
         # --- Output ---
         log_box = gr.Textbox(
@@ -462,8 +549,24 @@ def build_ui():
                 chunk_min, chunk_max, img_min, img_max, fps,
                 antistrobe, buffer_frames, luma_strength, luma_threshold,
                 seed, workers, preset,
+                dry_run,
             ],
             outputs=[log_box, preview, output_file, manifest_file],
+        )
+
+        benchmark_btn.click(
+            fn=lambda: gr.Textbox(visible=True, value="Running benchmark..."),
+            inputs=[],
+            outputs=benchmark_log,
+        ).then(
+            fn=run_benchmark_gen,
+            inputs=[
+                resolution, custom_res, aspect,
+                chunk_min, chunk_max, img_min, img_max, fps,
+                antistrobe, buffer_frames, luma_strength, luma_threshold,
+                seed, workers, preset,
+            ],
+            outputs=benchmark_log,
         )
 
     return app
