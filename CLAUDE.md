@@ -51,6 +51,13 @@ Porting from a v0.1 bash+ffmpeg script (`legacy_v0.1.sh`). Known issues in v0.1:
 - No reproducibility (unseeded randomization)
 - No image handling normalization
 
+## Platform Support
+- macOS, Linux, Windows 10/11
+- All paths via pathlib. No hardcoded separators.
+- ffmpeg/ffprobe located via shutil.which() — user is responsible for having them on PATH
+- No shell=True in subprocess calls
+- No /tmp literals — use tempfile module
+
 ## Technical Requirements
 
 ### Input Normalization (normalize.py)
