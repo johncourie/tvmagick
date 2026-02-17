@@ -1,5 +1,16 @@
+# macOS
+.DS_Store
+
+# Python
 __pycache__/
 *.pyc
+
+# Project directories
 output/
 test_assets/
+footage/
+generated/
+_old/
+
+# Claude
 .claude/
