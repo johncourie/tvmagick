@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/tvmagick-logo.png" alt="tvmagick logo" width="300">
+</p>
+
 # tvmagick
 
 Rapid-cut video assembler for perceptual disruption. Takes heterogeneous video and image sources, normalizes them, chops them into frame-accurate chunks at the threshold of semantic recognition, shuffles them, and concatenates them into a single output. Designed for CRT television display arrays.
