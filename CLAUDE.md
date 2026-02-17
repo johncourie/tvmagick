@@ -34,13 +34,13 @@ splicer/
 ```
 
 ## Environment
-- **Platform**: macOS (primary development and runtime)
+- **Platform**: macOS, Linux, Windows 10/11
 - **Python**: 3.10+
-- **ffmpeg/ffprobe**: System install via Homebrew (`brew install ffmpeg`), must be on PATH
+- **ffmpeg/ffprobe**: Must be on PATH (Homebrew, apt/dnf, winget/choco, or manual install)
 - **No pip dependencies for core pipeline** — subprocess + json + random + dataclasses
 - Optional: numpy for luma analysis if ffmpeg filter approach is insufficient
 - Future: gradio for GUI
-- ffmpeg is called via `subprocess`, not as a library. This is intentional — keeps Python as orchestration, ffmpeg as the workhorse, avoids compiled binding issues on Mac.
+- ffmpeg is called via `subprocess`, not as a library. This is intentional — keeps Python as orchestration, ffmpeg as the workhorse, avoids compiled binding issues.
 
 ## Origin
 Porting from a v0.1 bash+ffmpeg script (`legacy_v0.1.sh`). Known issues in v0.1:
@@ -170,5 +170,5 @@ preset = "fast"
 - All config flows through `config.py` as a dataclass — CLI and future GUI both consume it
 - Prefer ffmpeg filter chains over Python pixel manipulation — keep Python as orchestration
 - Every function should be independently testable with a single file input
-- macOS: verify ffmpeg is accessible via `shutil.which("ffmpeg")` at startup
+- Verify ffmpeg is accessible via `shutil.which("ffmpeg")` at startup
 - Do not introduce pip dependencies without explicit justification — subprocess + stdlib is the default
