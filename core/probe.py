@@ -84,8 +84,8 @@ def probe(filepath: str | Path) -> ProbeResult:
 
     # Detect if this is a still image
     image_formats = {"image2", "png_pipe", "jpeg_pipe", "webp_pipe", "bmp_pipe",
-                     "tiff_pipe", "gif", "svg_pipe"}
-    image_codecs = {"png", "mjpeg", "jpeg2000", "webp", "bmp", "tiff", "gif"}
+                     "tiff_pipe", "svg_pipe"}
+    image_codecs = {"png", "mjpeg", "jpeg2000", "webp", "bmp", "tiff"}
     is_image = (
         bool(set(format_name.split(",")) & image_formats)
         or video_stream.get("codec_name", "") in image_codecs
