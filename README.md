@@ -45,7 +45,13 @@ choco install ffmpeg
 git clone <repo-url> && cd splicer
 ```
 
-No pip dependencies. The entire pipeline uses Python standard library + ffmpeg subprocess calls.
+The core pipeline has zero pip dependencies (Python standard library + ffmpeg subprocess calls).
+
+For the GUI, install Gradio:
+
+```bash
+pip install -r requirements.txt
+```
 
 Verify the install:
 
@@ -55,7 +61,23 @@ python3 cli.py --help
 
 ## Usage
 
-### Basic
+### GUI
+
+```bash
+python3 gui.py
+```
+
+Opens a browser interface at `http://localhost:7860` with the full splicer pipeline. Same `core/` modules as the CLI — `SplicerConfig` is the single source of truth.
+
+- Upload videos and images directly
+- Resolution presets (HD, NTSC CRT, PAL CRT, custom)
+- Frame duration sliders with perceptual threshold labels
+- Anti-strobe controls (buffer frames, luma normalization, delta threshold)
+- RNG seed for reproducibility
+- Real-time pipeline log
+- Output preview and download for video + manifest JSON
+
+### CLI
 
 ```bash
 # Process a directory of videos and images
@@ -262,6 +284,8 @@ input files
 ```
 splicer/
 ├── cli.py               # argparse entry point
+├── gui.py               # Gradio browser interface (same pipeline)
+├── requirements.txt     # GUI dependency (gradio)
 ├── core/
 │   ├── config.py        # SplicerConfig dataclass — all parameters
 │   ├── probe.py         # ffprobe wrapper, input validation
@@ -273,4 +297,4 @@ splicer/
 └── *.bash               # legacy scripts (reference only)
 ```
 
-Zero pip dependencies. Python is orchestration; ffmpeg is the workhorse.
+Core pipeline has zero pip dependencies. GUI adds `gradio` only. Python is orchestration; ffmpeg is the workhorse.
