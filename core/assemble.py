@@ -358,8 +358,12 @@ def _count_expected_frames(
 
 
 def _write_concat_file(sequence: list[str], concat_path: Path) -> None:
-    """Write ffmpeg concat demuxer manifest."""
-    with open(concat_path, "w") as f:
+    """Write ffmpeg concat demuxer manifest.
+
+    Uses newline="" to force Unix line endings on all platforms —
+    ffmpeg's concat demuxer can choke on Windows CRLF.
+    """
+    with open(concat_path, "w", newline="\n") as f:
         for path in sequence:
             # Escape single quotes in paths
             safe_path = str(Path(path).resolve()).replace("'", "'\\''")

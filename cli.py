@@ -9,7 +9,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from core.config import SplicerConfig
-from core.probe import probe, ProbeError, ensure_ffprobe
+from core.platform import platform_check, PlatformError
+from core.probe import probe, ProbeError
 from core.normalize import normalize_video, normalize_image
 from core.chunk import chunk_video
 from core.assemble import assemble
@@ -25,14 +26,11 @@ def main() -> None:
     args = parse_args()
     config = build_config(args)
 
-    # Verify ffmpeg/ffprobe available
+    # Verify platform and tool availability
     try:
-        ensure_ffprobe()
-    except ProbeError as e:
+        platform_check()
+    except PlatformError as e:
         print(f"error: {e}", file=sys.stderr)
-        sys.exit(1)
-    if shutil.which("ffmpeg") is None:
-        print("error: ffmpeg not found on PATH", file=sys.stderr)
         sys.exit(1)
 
     # Prep mode — preprocess and exit
