@@ -8,14 +8,40 @@ Built on the cut-up technique tradition. Each shot lands at the threshold of rec
 
 ### Requirements
 
-- macOS (primary platform)
+- macOS, Linux, or Windows 10/11
 - Python 3.10+
-- ffmpeg/ffprobe via Homebrew
+- ffmpeg/ffprobe on PATH
+
+### Install ffmpeg
+
+**macOS** (Homebrew):
+```bash
+brew install ffmpeg
+```
+
+**Linux** (Debian/Ubuntu):
+```bash
+sudo apt install ffmpeg
+```
+
+**Linux** (Fedora/RHEL):
+```bash
+sudo dnf install ffmpeg
+```
+
+**Windows** (winget):
+```powershell
+winget install ffmpeg
+```
+
+**Windows** (Chocolatey):
+```powershell
+choco install ffmpeg
+```
 
 ### Setup
 
 ```bash
-brew install ffmpeg
 git clone <repo-url> && cd splicer
 ```
 
